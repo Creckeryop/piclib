@@ -1,2 +1,2 @@
 # piclib
-simple vita functions to load part image 
+Simple vita functions to load part image 
