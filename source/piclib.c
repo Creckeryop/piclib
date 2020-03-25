@@ -68,9 +68,10 @@ vita2d_texture *load_PNG_file_part(const char *filename, int x, int y, int width
 
 	unsigned int width_info, height_info;
 	int bit_depth, color_type;
+	int interlace;
 
 	png_get_IHDR(png_ptr, info_ptr, &width_info, &height_info, &bit_depth,
-				 &color_type, NULL, NULL, NULL);
+				 &color_type, &interlace, NULL, NULL);
 
 	if (bit_depth == 16)
 		png_set_strip_16(png_ptr);
@@ -129,28 +130,62 @@ vita2d_texture *load_PNG_file_part(const char *filename, int x, int y, int width
 	}
 
 	unsigned int *texture_data = vita2d_texture_get_datap(texture);
-	unsigned int *trash = malloc(width_info << 2);
-	unsigned long skip = (vita2d_texture_get_stride(texture) >> 2) - width / scale;
-	for (int i = 0; i < y; ++i)
-	{
-		png_read_row(png_ptr, (png_bytep)trash, NULL);
-	}
 
-	for (int i = 0; i < (int)(height / scale); ++i)
+	unsigned int *trash = malloc(width_info << 2);
+	int stride = vita2d_texture_get_stride(texture) >> 2;
+
+	if (interlace == PNG_INTERLACE_ADAM7)
 	{
-		for (int k = 0; k < scale; ++k)
+		int s = scale;
+		int output_height = height / s;
+		int output_width = width / s;
+		for (int pass = 0; pass < 7; ++pass)
+		{
+			int x_start = PNG_PASS_START_COL(pass);
+			int y_start = PNG_PASS_START_ROW(pass);
+			int x_step = 1 << PNG_PASS_COL_SHIFT(pass);
+			int y_step = 1 << PNG_PASS_ROW_SHIFT(pass);
+			int y_in = 0;
+
+			for (int y_out = y_start; y_out < height_info; y_out += y_step)
+			{
+				png_read_row(png_ptr, (png_bytep)trash, NULL);
+				if (y_out % s == 0 && y_out >= y && y_out - y < output_height)
+				{
+					int x_in = 0;
+					for (int x_out = x_start; x_out < width_info; x_out += x_step, x_in++)
+					{
+						if (x_out % s == 0 && x_out / s >= x && x_out / s - x < output_width)
+						{
+							texture_data[(x_out / s - x) + (y_out / s - y) * stride] = trash[x_in];
+						}
+					}
+				}
+			}
+		}
+	}
+	else
+	{
+		unsigned long skip = stride - width / scale;
+		for (int i = 0; i < y; ++i)
 		{
 			png_read_row(png_ptr, (png_bytep)trash, NULL);
 		}
-		unsigned int *row_ptr = trash + x;
-		for (int j = 0; j < width / scale; ++j)
+		for (int i = 0; i < (int)(height / scale); ++i)
 		{
-			*texture_data++ = *row_ptr;
-			row_ptr += (int)scale;
+			for (int k = 0; k < scale; ++k)
+			{
+				png_read_row(png_ptr, (png_bytep)trash, NULL);
+			}
+			unsigned int *row_ptr = trash + x;
+			for (int j = 0; j < width / scale; ++j)
+			{
+				*texture_data++ = *row_ptr;
+				row_ptr += (int)scale;
+			}
+			texture_data += skip;
 		}
-		texture_data += skip;
 	}
-
 	png_read_end(png_ptr, NULL);
 	png_destroy_read_struct(&png_ptr, &info_ptr, (png_infopp)0);
 	free(trash);
@@ -209,9 +244,10 @@ vita2d_texture *load_PNG_file_downscaled(const char *filename, int level)
 
 	unsigned int width_info, height_info;
 	int bit_depth, color_type;
+	int interlace;
 
 	png_get_IHDR(png_ptr, info_ptr, &width_info, &height_info, &bit_depth,
-				 &color_type, NULL, NULL, NULL);
+				 &color_type, &interlace, NULL, NULL);
 
 	if (bit_depth == 16)
 		png_set_strip_16(png_ptr);
@@ -272,23 +308,56 @@ vita2d_texture *load_PNG_file_downscaled(const char *filename, int level)
 
 	unsigned int *texture_data = vita2d_texture_get_datap(texture);
 	unsigned int *trash = malloc(width_info << 2);
-	unsigned long skip = (vita2d_texture_get_stride(texture) >> 2) - width_info / scale;
+	int stride = vita2d_texture_get_stride(texture) >> 2;
 
-	for (int i = 0; i < (int)(height_info / scale); ++i)
+	if (interlace == PNG_INTERLACE_ADAM7)
 	{
-		for (int k = 0; k < scale; ++k)
+		int s = scale;
+		int output_height = height_info / s;
+		int output_width = width_info / s;
+		for (int pass = 0; pass < 7; ++pass)
 		{
-			png_read_row(png_ptr, (png_bytep)trash, NULL);
-		}
-		unsigned int *row_ptr = trash;
-		for (int j = 0; j < width_info / scale; ++j)
-		{
-			*texture_data++ = *row_ptr;
-			row_ptr += (int)scale;
-		}
-		texture_data += skip;
-	}
+			int x_start = PNG_PASS_START_COL(pass);
+			int y_start = PNG_PASS_START_ROW(pass);
+			int x_step = 1 << PNG_PASS_COL_SHIFT(pass);
+			int y_step = 1 << PNG_PASS_ROW_SHIFT(pass);
+			int y_in = 0;
 
+			for (int y_out = y_start; y_out < height_info; y_out += y_step)
+			{
+				png_read_row(png_ptr, (png_bytep)trash, NULL);
+				if (y_out % s == 0 && y_out < output_height)
+				{
+					int x_in = 0;
+					for (int x_out = x_start; x_out < width_info; x_out += x_step, x_in++)
+					{
+						if (x_out % s == 0 && x_out / s < output_width)
+						{
+							texture_data[x_out / s + y_out / s * stride] = trash[x_in];
+						}
+					}
+				}
+			}
+		}
+	}
+	else
+	{
+		unsigned long skip = stride - width_info / scale;
+		for (int i = 0; i < (int)(height_info / scale); ++i)
+		{
+			for (int k = 0; k < scale; ++k)
+			{
+				png_read_row(png_ptr, (png_bytep)trash, NULL);
+			}
+			unsigned int *row_ptr = trash;
+			for (int j = 0; j < width_info / scale; ++j)
+			{
+				*texture_data++ = *row_ptr;
+				row_ptr += (int)scale;
+			}
+			texture_data += skip;
+		}
+	}
 	png_read_end(png_ptr, NULL);
 	png_destroy_read_struct(&png_ptr, &info_ptr, (png_infopp)0);
 	free(trash);
@@ -297,7 +366,8 @@ vita2d_texture *load_PNG_file_downscaled(const char *filename, int level)
 	return texture;
 }
 
-typedef struct {
+typedef struct
+{
 	struct jpeg_source_mgr pub;
 	SceUID fd;
 	JOCTET *buffer;
@@ -368,7 +438,7 @@ static void jpeg_vita_src(j_decompress_ptr cinfo, SceUID infile)
 	src->pub.resync_to_restart = jpeg_resync_to_restart; /* use default method */
 	src->pub.term_source = term_source;
 	src->fd = infile;
-	src->pub.bytes_in_buffer = 0;	/* forces fill_input_buffer on first read */
+	src->pub.bytes_in_buffer = 0;	 /* forces fill_input_buffer on first read */
 	src->pub.next_input_byte = NULL; /* until buffer loaded */
 }
 
