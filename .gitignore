@@ -8,6 +8,7 @@ build/
 *.suprx
 *.skprx
 *.vpk
+*.vpk
 *.o
 *.bin
 *.elf
